@@ -1,0 +1,376 @@
+name: Build Samundar Dost APK
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK
+        run: |
+          sdkmanager "platforms;android-35" "build-tools;35.0.0"
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
+
+      - name: Create Android project
+        run: |
+          mkdir -p app/src/main/java/com/samundardost/app
+
+          cat > settings.gradle.kts <<'EOF'
+          pluginManagement {
+              repositories {
+                  google()
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
+          }
+          dependencyResolutionManagement {
+              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+          }
+          rootProject.name = "SamundarDost"
+          include(":app")
+          EOF
+
+          cat > build.gradle.kts <<'EOF'
+          plugins {
+              id("com.android.application") version "8.7.3" apply false
+              id("org.jetbrains.kotlin.android") version "2.0.21" apply false
+              id("org.jetbrains.kotlin.plugin.compose") version "2.0.21" apply false
+          }
+          EOF
+
+          cat > app/build.gradle.kts <<'EOF'
+          plugins {
+              id("com.android.application")
+              id("org.jetbrains.kotlin.android")
+              id("org.jetbrains.kotlin.plugin.compose")
+          }
+
+          android {
+              namespace = "com.samundardost.app"
+              compileSdk = 35
+
+              defaultConfig {
+                  applicationId = "com.samundardost.app"
+                  minSdk = 23
+                  targetSdk = 35
+                  versionCode = 1
+                  versionName = "1.0"
+              }
+
+              buildFeatures {
+                  compose = true
+              }
+          }
+
+          dependencies {
+              implementation(platform("androidx.compose:compose-bom:2024.09.00"))
+              implementation("androidx.activity:activity-compose:1.9.2")
+              implementation("androidx.compose.ui:ui")
+              implementation("androidx.compose.ui:ui-tooling-preview")
+              implementation("androidx.compose.material3:material3")
+              implementation("androidx.core:core-ktx:1.13.1")
+          }
+          EOF
+
+          cat > app/src/main/AndroidManifest.xml <<'EOF'
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
+              <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
+              <application
+                  android:theme="@android:style/Theme.Material.Light.NoActionBar"
+                  android:label="Samundar Dost"
+                  android:allowBackup="true">
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN"/>
+                          <category android:name="android.intent.category.LAUNCHER"/>
+                      </intent-filter>
+                  </activity>
+              </application>
+          </manifest>
+          EOF
+
+          cat > app/src/main/java/com/samundardost/app/MainActivity.kt <<'EOF'
+          package com.samundardost.app
+
+          import android.Manifest
+          import android.content.Context
+          import android.content.pm.PackageManager
+          import android.location.LocationManager
+          import android.os.Bundle
+          import android.hardware.Sensor
+          import android.hardware.SensorEvent
+          import android.hardware.SensorEventListener
+          import android.hardware.SensorManager
+          import androidx.activity.ComponentActivity
+          import androidx.activity.compose.setContent
+          import androidx.activity.compose.rememberLauncherForActivityResult
+          import androidx.activity.result.contract.ActivityResultContracts
+          import androidx.compose.foundation.layout.*
+          import androidx.compose.foundation.rememberScrollState
+          import androidx.compose.foundation.verticalScroll
+          import androidx.compose.material3.*
+          import androidx.compose.runtime.*
+          import androidx.compose.ui.Alignment
+          import androidx.compose.ui.Modifier
+          import androidx.compose.ui.platform.LocalContext
+          import androidx.compose.ui.unit.dp
+          import androidx.core.content.ContextCompat
+          import java.util.Locale
+
+          class MainActivity : ComponentActivity(), SensorEventListener {
+              private lateinit var sensorManager: SensorManager
+              private var rotationSensor: Sensor? = null
+              private var heading by mutableFloatStateOf(0f)
+
+              override fun onCreate(savedInstanceState: Bundle?) {
+                  super.onCreate(savedInstanceState)
+                  sensorManager = getSystemService(SENSOR_SERVICE) as SensorManager
+                  rotationSensor = sensorManager.getDefaultSensor(
+                      Sensor.TYPE_ROTATION_VECTOR
+                  )
+                  setContent {
+                      MaterialTheme {
+                          Surface(modifier = Modifier.fillMaxSize()) {
+                              SamundarApp(heading)
+                          }
+                      }
+                  }
+              }
+
+              override fun onResume() {
+                  super.onResume()
+                  rotationSensor?.let {
+                      sensorManager.registerListener(
+                          this, it, SensorManager.SENSOR_DELAY_UI
+                      )
+                  }
+              }
+
+              override fun onPause() {
+                  sensorManager.unregisterListener(this)
+                  super.onPause()
+              }
+
+              override fun onSensorChanged(event: SensorEvent) {
+                  if (event.sensor.type == Sensor.TYPE_ROTATION_VECTOR) {
+                      val matrix = FloatArray(9)
+                      val orientation = FloatArray(3)
+                      SensorManager.getRotationMatrixFromVector(matrix, event.values)
+                      SensorManager.getOrientation(matrix, orientation)
+                      heading = (
+                          Math.toDegrees(orientation[0].toDouble()).toFloat() + 360f
+                      ) % 360f
+                  }
+              }
+
+              override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
+          }
+
+          @Composable
+          fun SamundarApp(heading: Float) {
+              val context = LocalContext.current
+              var locationText by remember {
+                  mutableStateOf("Abhi location check nahi ki")
+              }
+              val prefs = remember {
+                  context.getSharedPreferences("samundar_dost", Context.MODE_PRIVATE)
+              }
+              var saved by remember {
+                  mutableStateOf(prefs.getString("saved", "") ?: "")
+              }
+
+              fun updateLocation() {
+                  locationText = readLocation(context)
+              }
+
+              val permissionLauncher = rememberLauncherForActivityResult(
+                  ActivityResultContracts.RequestMultiplePermissions()
+              ) {
+                  if (it.values.any { granted -> granted }) {
+                      updateLocation()
+                  } else {
+                      locationText = "GPS permission dena zaroori hai."
+                  }
+              }
+
+              Column(
+                  modifier = Modifier
+                      .fillMaxSize()
+                      .verticalScroll(rememberScrollState())
+                      .padding(20.dp),
+                  horizontalAlignment = Alignment.CenterHorizontally
+              ) {
+                  Text("🌊", style = MaterialTheme.typography.displayLarge)
+                  Text("SAMUNDAR DOST", style = MaterialTheme.typography.headlineMedium)
+                  Text("Machheron ka digital saathi")
+
+                  Spacer(Modifier.height(24.dp))
+
+                  Card(Modifier.fillMaxWidth()) {
+                      Column(Modifier.padding(18.dp)) {
+                          Text("🧭 Compass", style = MaterialTheme.typography.titleLarge)
+                          Text("${heading.toInt()}°")
+                          Text(
+                              when {
+                                  heading >= 337.5 || heading < 22.5 -> "North"
+                                  heading < 67.5 -> "North-East"
+                                  heading < 112.5 -> "East"
+                                  heading < 157.5 -> "South-East"
+                                  heading < 202.5 -> "South"
+                                  heading < 247.5 -> "South-West"
+                                  heading < 292.5 -> "West"
+                                  else -> "North-West"
+                              }
+                          )
+                      }
+                  }
+
+                  Spacer(Modifier.height(12.dp))
+
+                  Card(Modifier.fillMaxWidth()) {
+                      Column(Modifier.padding(18.dp)) {
+                          Text("📍 Meri GPS Location", style = MaterialTheme.typography.titleLarge)
+                          Spacer(Modifier.height(8.dp))
+                          Text(locationText)
+                          Spacer(Modifier.height(12.dp))
+
+                          Button(
+                              onClick = {
+                                  val fine = ContextCompat.checkSelfPermission(
+                                      context, Manifest.permission.ACCESS_FINE_LOCATION
+                                  ) == PackageManager.PERMISSION_GRANTED
+                                  val coarse = ContextCompat.checkSelfPermission(
+                                      context, Manifest.permission.ACCESS_COARSE_LOCATION
+                                  ) == PackageManager.PERMISSION_GRANTED
+
+                                  if (fine || coarse) {
+                                      updateLocation()
+                                  } else {
+                                      permissionLauncher.launch(
+                                          arrayOf(
+                                              Manifest.permission.ACCESS_FINE_LOCATION,
+                                              Manifest.permission.ACCESS_COARSE_LOCATION
+                                          )
+                                      )
+                                  }
+                              },
+                              modifier = Modifier.fillMaxWidth()
+                          ) {
+                              Text("Get GPS Location")
+                          }
+
+                          OutlinedButton(
+                              onClick = {
+                                  if (locationText.startsWith("Latitude:")) {
+                                      saved = (saved + "\n" + locationText).trim()
+                                      prefs.edit().putString("saved", saved).apply()
+                                  }
+                              },
+                              modifier = Modifier.fillMaxWidth()
+                          ) {
+                              Text("Save My Location")
+                          }
+                      }
+                  }
+
+                  Spacer(Modifier.height(12.dp))
+
+                  Card(Modifier.fillMaxWidth()) {
+                      Column(Modifier.padding(18.dp)) {
+                          Text("💾 Saved Locations", style = MaterialTheme.typography.titleLarge)
+                          Text(if (saved.isBlank()) "Abhi koi location save nahi hai." else saved)
+                          TextButton(onClick = {
+                              saved = ""
+                              prefs.edit().remove("saved").apply()
+                          }) {
+                              Text("Clear Saved Locations")
+                          }
+                      }
+                  }
+
+                  Spacer(Modifier.height(16.dp))
+                  Text("Safety: Samundar jane se pehle weather aur local warnings check karein.")
+              }
+          }
+
+          fun readLocation(context: Context): String {
+              val fine = ContextCompat.checkSelfPermission(
+                  context, Manifest.permission.ACCESS_FINE_LOCATION
+              ) == PackageManager.PERMISSION_GRANTED
+              val coarse = ContextCompat.checkSelfPermission(
+                  context, Manifest.permission.ACCESS_COARSE_LOCATION
+              ) == PackageManager.PERMISSION_GRANTED
+
+              if (!fine && !coarse) return "GPS permission nahi mili."
+
+              return try {
+                  val manager = context.getSystemService(
+                      Context.LOCATION_SERVICE
+                  ) as LocationManager
+
+                  val location = listOf(
+                      LocationManager.GPS_PROVIDER,
+                      LocationManager.NETWORK_PROVIDER
+                  ).firstNotNullOfOrNull { provider ->
+                      try {
+                          if (manager.isProviderEnabled(provider)) {
+                              manager.getLastKnownLocation(provider)
+                          } else null
+                      } catch (_: Exception) {
+                          null
+                      }
+                  }
+
+                  if (location == null) {
+                      "Location nahi mili. GPS on karein, khuli jagah par dobara try karein."
+                  } else {
+                      String.format(
+                          Locale.US,
+                          "Latitude: %.6f\nLongitude: %.6f",
+                          location.latitude,
+                          location.longitude
+                      )
+                  }
+              } catch (_: Exception) {
+                  "GPS abhi available nahi. Dobara try karein."
+              }
+          }
+          EOF
+
+      - name: Build APK
+        run: gradle --no-daemon assembleDebug
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Samundar-Dost-APK
+          path: app/build/outputs/apk/debug/app-debug.apk
+          
